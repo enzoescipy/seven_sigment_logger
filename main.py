@@ -1,6 +1,6 @@
 from codecs import escape_encode
-import enum
 import cv2
+from matplotlib import image
 import numpy as np
 import matplotlib.pyplot as plt
 from imutils import contours as ctr
@@ -8,8 +8,9 @@ import imutils
 from imutils.perspective import four_point_transform
 plt.style.use('dark_background')
 
+
 class SegmentProcessor:
-    IMG_RESIZE = 1000
+    IMG_RESIZE = 8000
     BLUR_BIAS = 1
     DIGITS_LOOKUP = {
         (1, 1, 1, 0, 1, 1, 1): 0,
@@ -29,13 +30,15 @@ class SegmentProcessor:
     rectpos = []
     @classmethod
     def img_change(cls, image) -> None:
-        cls.image = imutils.resize(image, height=(cls.IMG_RESIZE))
+        cls.image = image
 
 
     
     @classmethod
     def lcd_rect_setter(cls):
-        img = cls.image
+        cls.rectpos = []
+        img = imutils.resize(cls.image, height=(1000))
+        img_copied = img.copy()
         #user select drawing range by clicking 4-pointed lcd rect.
         def on_mouse(event, x, y, flag, param):
             if event == cv2.EVENT_LBUTTONDOWN :
@@ -44,18 +47,54 @@ class SegmentProcessor:
                 cv2.imshow("image", img)
                 if len(cls.rectpos) == 4:
                     cv2.destroyAllWindows()
+                    return
 
         cv2.namedWindow('image')
         cv2.setMouseCallback('image', on_mouse, img)
 
-
+        #more presize croping.
         cv2.imshow("image", img)
         cv2.waitKey(0)
+        xs = []
+        ys = []
+        for point in cls.rectpos:
+            point = point[0]
+            xs.append(point[0])
+            ys.append(point[1])
+        xs.sort()
+        ys.sort()
+        ynew = int(ys[0]*0.9)
+        hnew = int(ys[-1]*1.1)
+        xnew = int(xs[0]*0.9)
+        wnew = int(xs[-1]*1.1)
+
+        img = img_copied[ynew:hnew, xnew:wnew]
+        height_old, width_old, c = img.shape
+        img = imutils.resize(img, height=(1000))
+        h,width_new, c = img.shape
+        #user select drawing range by clicking 4-pointed lcd rect.
+        cls.rectpos = []
+        def on_mouse(event, x, y, flag, param):
+            if event == cv2.EVENT_LBUTTONDOWN :
+                cls.rectpos.append([[xnew + x/1000*height_old,ynew + y/width_new*width_old]])
+                cv2.circle(img, (x,y), 3, (0,255,0), -1)
+                cv2.imshow("image", img)
+                if len(cls.rectpos) >= 4:
+                    cv2.destroyAllWindows()
+                    return
+
+        cv2.namedWindow('image')
+        cv2.setMouseCallback('image', on_mouse, img)
+        cv2.imshow("image", img)
+        cv2.waitKey(0)
+
+
     @classmethod
     def segment_getter(cls):
-        img = cls.image
-        img = four_point_transform(img, np.array(cls.rectpos).reshape(4,2))
-
+        img = imutils.resize(cls.image, height=(cls.IMG_RESIZE))
+        height_now, w, c = img.shape
+        rectpos_adjusted = np.array(cls.rectpos) * (height_now / 1000)
+        img = four_point_transform(img, rectpos_adjusted.reshape(4,2))
         #image preprocessing
         height, width, channel = img.shape
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -73,7 +112,7 @@ class SegmentProcessor:
                 adaptiveMethod=cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                 thresholdType=cv2.THRESH_BINARY_INV,
                 blockSize=19,
-                C=9
+                C=5
             )
 
 
@@ -81,7 +120,6 @@ class SegmentProcessor:
             img_blur_thresh = 255 - img_blur_thresh
 
         cv2.imshow("check", img_blur_thresh)
-        cv2.waitKey(0)
 
         #contours making
 
@@ -178,7 +216,7 @@ class SegmentProcessor:
                 if total / float(area) > 0.5:
                     on[i]= 1
             # lookup the digit and draw it on the image
-            if w < 15:
+            if h/w >= 4:
                 digit = 1
             elif tuple(on) in cls.DIGITS_LOOKUP.keys():
                 digit = cls.DIGITS_LOOKUP[tuple(on)]
@@ -194,7 +232,6 @@ class SegmentProcessor:
 
         cv2.imshow("result", img)
 
-        cv2.waitKey(0)
 
 
         result = 0
@@ -206,9 +243,90 @@ class SegmentProcessor:
 
         return result
 
+class VideoFrames:
+    video = None
+    frames = []
+    @classmethod
+    def vid_change(cls, videoPath):
+        cls.video = cv2.VideoCapture(videoPath)
+        cls.videoPath = videoPath
+        cls.fps = cls.video.get(cv2.CAP_PROP_FPS)
+        cls.frameCount = int(cls.video.get(cv2.CAP_PROP_FRAME_COUNT))
 
-image = cv2.imread("test.jpg")
-SegmentProcessor.img_change(image)
+    @classmethod
+    def framestacking(cls):
+        count = 0
+        while True:
+            succes, image = cls.video.read()
+            if not succes:
+                break
+            cls.frames.append(cv2.rotate(image, cv2.ROTATE_180))
+            count += 1
+            if count % 99 == 0:
+                print(int(100 * count / cls.frameCount))
+
+    @classmethod        
+    def sampling(cls, amount):
+        mod = cls.frameCount // amount
+        sampled = []
+        for i in range(cls.frameCount):
+            if i % mod == 0:
+                sampled.append(cls.frames[i])
+        return sampled
+        
+
+
+    
+
+VideoFrames.vid_change("dot_removed.mp4")
+VideoFrames.framestacking()
+
+TEST_NUM = 6
+sample = VideoFrames.sampling(TEST_NUM)
+SegmentProcessor.img_change(sample[TEST_NUM // 2])
 SegmentProcessor.lcd_rect_setter()
-result = SegmentProcessor.segment_getter()
-print(result)
+
+while True:
+    for i in range(TEST_NUM):
+        SegmentProcessor.img_change(sample[i])
+        result = SegmentProcessor.segment_getter()
+        if type(result) == type([]):
+            sum = ""
+            result.reverse()
+            for res in result:
+                if res == -1:
+                    sum += "X"
+                    continue
+                sum += str(res)
+            print(sum)
+        else:
+            print(result)
+        cv2.waitKey(3000)
+    
+    acceptable = input("keep going : 1, adjust blur : 2, adjust size : 3       :: ")
+    if acceptable == "2":
+        cv2.destroyAllWindows()
+        print("current blur : " , SegmentProcessor.BLUR_BIAS)
+        bias = input("- : minus 1, + : plus 1, 0 : ignore")
+        if bias == "-" : 
+            bias = -1
+        elif bias == "+" : 
+            bias = 1
+        else: 
+            bias = 0
+        SegmentProcessor.BLUR_BIAS +=  bias
+    elif acceptable == "3":
+        cv2.destroyAllWindows()
+        print("current size factor : " , SegmentProcessor.IMG_RESIZE)
+        bias = input("re-factor to (integer) : ")
+        SegmentProcessor.IMG_RESIZE = int(bias)
+    else:
+        break
+
+print("done!", SegmentProcessor.BLUR_BIAS, SegmentProcessor.IMG_RESIZE)
+with open(VideoFrames.videoPath+"_spec.txt", "w") as f:
+    f.write("done!\n")
+    f.write(str(SegmentProcessor.BLUR_BIAS)+"\n")
+    f.write(str(SegmentProcessor.IMG_RESIZE)+"\n")
+
+
