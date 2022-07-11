@@ -8,6 +8,8 @@ import imutils
 from imutils.perspective import four_point_transform
 from tkinter import filedialog
 from tkinter import Tk
+from os.path import exists
+import pickle as pk
 plt.style.use('dark_background')
 
 
@@ -284,8 +286,17 @@ class VideoFrames:
         cls.fps = cls.video.get(cv2.CAP_PROP_FPS)
         cls.frameCount = int(cls.video.get(cv2.CAP_PROP_FRAME_COUNT))
 
+
+        
+
     @classmethod
     def framestacking(cls):
+        dir_vidframefile = cls.videoPath[:cls.videoPath.rfind(".")] + ".sslg.frames"
+        if exists(dir_vidframefile):
+            with open(dir_vidframefile, "rb") as f:
+                cls.frames = pk.load(f)
+                return
+
         count = 0
         while True:
             succes, image = cls.video.read()
@@ -296,6 +307,8 @@ class VideoFrames:
             if count % 99 == 0:
                 print(int(100 * count / cls.frameCount))
 
+        with open(dir_vidframefile, "wb") as f:
+            pk.dump(cls.frames, f)
     @classmethod        
     def sampling(cls, amount):
         mod = cls.frameCount // amount
@@ -322,49 +335,52 @@ samples = VideoFrames.sampling(TEST_NUM)
 SegmentProcessor.img_change(samples[TEST_NUM // 2])
 SegmentProcessor.lcd_rect_setter()
 
-while True:
-    for i in range(TEST_NUM):
-        SegmentProcessor.img_change(samples[i])
-        result = SegmentProcessor.segment_getter()
-        if type(result) == type([]):
-            sum = ""
-            result.reverse()
-            for res in result:
-                if res == -1:
-                    sum += "X"
-                    continue
-                sum += str(res)
-            print(sum)
+if exists(VideoFrames.videoPath+".sslg.spec"):
+    with open(VideoFrames.videoPath+".sslg.spec", "rb") as f:
+        SegmentProcessor.BLUR_BIAS, SegmentProcessor.IMG_RESIZE = pk.load(f)
+else:
+    while True:
+        for i in range(TEST_NUM):
+            SegmentProcessor.img_change(samples[i])
+            result = SegmentProcessor.segment_getter()
+            if type(result) == type([]):
+                sum = ""
+                result.reverse()
+                for res in result:
+                    if res == -1:
+                        sum += "X"
+                        continue
+                    sum += str(res)
+                print(sum)
+            else:
+                print(result)
+            cv2.waitKey(3000)
+        
+        acceptable = input("keep going : 1, adjust blur : 2, adjust size : 3       :: ")
+        if acceptable == "2":
+            cv2.destroyAllWindows()
+            print("current blur : " , SegmentProcessor.BLUR_BIAS)
+            bias = input("- : minus 1, + : plus 1, 0 : ignore")
+            if bias == "-" : 
+                bias = -1
+            elif bias == "+" : 
+                bias = 1
+            else: 
+                bias = 0
+            SegmentProcessor.BLUR_BIAS +=  bias
+        elif acceptable == "3":
+            cv2.destroyAllWindows()
+            print("current size factor : " , SegmentProcessor.IMG_RESIZE)
+            bias = input("re-factor to (integer) : ")
+            SegmentProcessor.IMG_RESIZE = int(bias)
         else:
-            print(result)
-        cv2.waitKey(3000)
-    
-    acceptable = input("keep going : 1, adjust blur : 2, adjust size : 3       :: ")
-    if acceptable == "2":
-        cv2.destroyAllWindows()
-        print("current blur : " , SegmentProcessor.BLUR_BIAS)
-        bias = input("- : minus 1, + : plus 1, 0 : ignore")
-        if bias == "-" : 
-            bias = -1
-        elif bias == "+" : 
-            bias = 1
-        else: 
-            bias = 0
-        SegmentProcessor.BLUR_BIAS +=  bias
-    elif acceptable == "3":
-        cv2.destroyAllWindows()
-        print("current size factor : " , SegmentProcessor.IMG_RESIZE)
-        bias = input("re-factor to (integer) : ")
-        SegmentProcessor.IMG_RESIZE = int(bias)
-    else:
-        break
+            break
 
-print("done!", SegmentProcessor.BLUR_BIAS, SegmentProcessor.IMG_RESIZE)
-with open(VideoFrames.videoPath+"_spec.txt", "w") as f:
-    f.write("done!\n")
-    f.write(str(SegmentProcessor.BLUR_BIAS)+"\n")
-    f.write(str(SegmentProcessor.IMG_RESIZE)+"\n")
+    print("done!", SegmentProcessor.BLUR_BIAS, SegmentProcessor.IMG_RESIZE)
 
+    with open(VideoFrames.videoPath+".sslg.spec", "wb") as f:
+        setting = [SegmentProcessor.BLUR_BIAS, SegmentProcessor.IMG_RESIZE]
+        pk.dump(setting, f)
 
 
 
