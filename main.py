@@ -1,6 +1,6 @@
 from codecs import escape_encode
 import cv2
-from matplotlib import image
+from copy import deepcopy
 import numpy as np
 import matplotlib.pyplot as plt
 from imutils import contours as ctr
@@ -10,7 +10,7 @@ from tkinter import filedialog
 from tkinter import Tk
 from os.path import exists
 import pickle as pk
-from multiprocessing import Process, Queue
+from multiprocessing import Process, Queue, Pipe
 plt.style.use('dark_background')
 
 
@@ -37,18 +37,21 @@ class SegmentProcessor:
     ROTATION = None
     REVERSE_COLOR = True
     THERSH_HOLD_GLOBAL = False
+    
+    digitMin = -1
+    digitMax = -1
 
     rectpos = []
+
     @classmethod
-    def img_change(cls, image) -> None:
-        cls.image = image
-
-
+    def setDigitRange(cls,min, max):
+        cls.digitMin = min
+        cls.digitMax = max
     
     @classmethod
-    def lcd_rect_setter(cls):
+    def lcd_rect_setter(cls,image):
         cls.rectpos = []
-        img = imutils.resize(cls.image, height=(1000))
+        img = imutils.resize(image, height=(1000))
         img_copied = img.copy()
         #user select drawing range by clicking 4-pointed lcd rect.
         def on_mouse(event, x, y, flag, param):
@@ -118,8 +121,8 @@ class SegmentProcessor:
              
 
     @classmethod
-    def segment_getter(cls):
-        img = imutils.resize(cls.image, height=(cls.IMG_RESIZE))
+    def segment_getter(cls, img, test):
+        img = imutils.resize(img, height=(cls.IMG_RESIZE))
         height_now, w, c = img.shape
         rectpos_adjusted = np.array(cls.rectpos) * (height_now / 1000)
         img = four_point_transform(img, rectpos_adjusted.reshape(4,2))
@@ -136,7 +139,7 @@ class SegmentProcessor:
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
 
-        img_blurred = cv2.GaussianBlur(gray, ksize=(5, 5), sigmaX=cls.BLUR_BIAS)
+        img_blurred = cv2.GaussianBlur(gray, ksize=(0,0), sigmaX=cls.BLUR_BIAS)
 
         if cls.THERSH_HOLD_GLOBAL == False:
             img_blur_thresh = cv2.threshold(img_blurred, 0, 255,
@@ -155,7 +158,8 @@ class SegmentProcessor:
         if cls.REVERSE_COLOR:
             img_blur_thresh = 255 - img_blur_thresh
 
-        cv2.imshow("check", img_blur_thresh)
+        if test == True:
+            cv2.imshow("check", img_blur_thresh)
 
         #contours making
 
@@ -251,7 +255,7 @@ class SegmentProcessor:
                 if total / float(area) > 0.5:
                     on[i]= 1
             # lookup the digit and draw it on the image
-            if h/w >= 4:
+            if 10 >= h/w >= 4:
                 digit = 1
             elif tuple(on) in cls.DIGITS_LOOKUP.keys():
                 digit = cls.DIGITS_LOOKUP[tuple(on)]
@@ -265,12 +269,15 @@ class SegmentProcessor:
             cv2.putText(img, str(digit), (x - 10, y - 10),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
 
-        cv2.imshow("result", img)
+        if test == True:
+            cv2.imshow("result", img)
 
 
 
         result = 0
         digits.reverse()
+        if  cls.digitMin > len(digits) or len(digits) > cls.digitMax :
+            return digits
         for i,dig in enumerate(digits):
             if dig == -1:
                 return digits
@@ -287,74 +294,20 @@ class VideoFrames:
         cls.videoPath = videoPath
         cls.fps = cls.video.get(cv2.CAP_PROP_FPS)
         cls.frameCount = int(cls.video.get(cv2.CAP_PROP_FRAME_COUNT))
-
-    @staticmethod
-    def work(id,vidPath, start, end, result, framesStack, framesCount):
-        count = start
-        vid_work = cv2.VideoCapture(vidPath)
-        vid_work.set(cv2.CAP_PROP_POS_FRAMES, start)
-        while True:
-            if (count >= end - 1):
-                print(id, start, count, "done!")
-                break
-            succes, image = vid_work.read()
-            if result == None:
-                framesStack.append(cv2.rotate(image, cv2.ROTATE_180))
-            else:
-                result.put(cv2.rotate(image, cv2.ROTATE_180))
-            count += 1
-            if count % 99 == 0:
-                print(id, int(100 * count / framesCount))   
-
-    @classmethod
-    def framestacking(cls):
-        dir_vidframefile = cls.videoPath[:cls.videoPath.rfind(".")] + ".sslg.frames"
-        if exists(dir_vidframefile):
-            with open(dir_vidframefile, "rb") as f:
-                cls.frames = pk.load(f)
-                return
-        
-        if cls.frameCount > 1000:
-            if __name__ == "__main__":
-                GROUPED = 500
-                queues = []
-                threads = []
-                divided = cls.frameCount // GROUPED
-                for i in range(divided + 1):
-                    start = i * GROUPED
-                    end = 0
-                    if i == divided:
-                        end = cls.frameCount
-                    else:
-                        end = (i+1) * GROUPED
-                    queues.append(Queue())
-                    threads.append(Process(target=cls.work, args=(i, cls.videoPath ,start, end, queues[i], cls.frames, cls.frameCount)))
-                for i in range(divided + 1):
-                    threads[i].start()
-                for i in range(divided + 1):
-                    threads[i].join()
-                for i in range(divided + 1):
-                    queues[i].put("STOP")
-                for i in range(divided + 1):
-                    while True:
-                        got = queues[i].get()
-                        if got == "STOP":
-                            break
-                        else:
-                            cls.frames.append(got)
-                print("got : ", len(cls.frames), "would be :", cls.frameCount)
-        else:
-            cls.work(0,cls.videoPath, 0,cls.frameCount+1, None)
-
-        with open(dir_vidframefile, "wb") as f:
-            pk.dump(cls.frames, f)
+    
     @classmethod        
-    def sampling(cls, amount):
+    def preSampling(cls, amount):
         mod = cls.frameCount // amount
+        vid = cv2.VideoCapture(cls.videoPath)
         sampled = []
         for i in range(cls.frameCount):
             if i % mod == 0:
-                sampled.append(cls.frames[i])
+                vid.set(cv2.CAP_PROP_POS_FRAMES, i)
+                suc, img = vid.read()
+                sampled.append(cv2.rotate(img, cv2.ROTATE_180))
+                cv2.imshow("preshow", imutils.resize(cv2.rotate(img, cv2.ROTATE_180), height=(1000)))
+                cv2.waitKey(10)
+        cv2.destroyAllWindows()
         return sampled
         
 
@@ -368,12 +321,16 @@ if __name__ == "__main__":
     root.destroy()
 
     VideoFrames.vid_change(vidPath)
-    VideoFrames.framestacking()
+    #VideoFrames.framestacking_depracated() => moved to main progress for lowering memory load.
 
-    TEST_NUM = 6
-    samples = VideoFrames.sampling(TEST_NUM)
-    SegmentProcessor.img_change(samples[TEST_NUM // 2])
-    SegmentProcessor.lcd_rect_setter()
+    TEST_NUM = 10
+    samples = VideoFrames.preSampling(TEST_NUM)
+    SegmentProcessor.lcd_rect_setter(samples[TEST_NUM // 2])
+
+    digitMin = int(input("please put the minimum digits of your device : "))
+    digitMax = int(input("please put the Maximum digits of your device : "))
+    SegmentProcessor.setDigitRange(digitMin, digitMax)
+
 
     if exists(VideoFrames.videoPath+".sslg.spec"):
         with open(VideoFrames.videoPath+".sslg.spec", "rb") as f:
@@ -383,8 +340,7 @@ if __name__ == "__main__":
     else:
         while True:
             for i in range(TEST_NUM):
-                SegmentProcessor.img_change(samples[i])
-                result = SegmentProcessor.segment_getter()
+                result = SegmentProcessor.segment_getter(samples[i], True)
                 if type(result) == type([]):
                     sum = ""
                     result.reverse()
@@ -396,20 +352,15 @@ if __name__ == "__main__":
                     print(sum)
                 else:
                     print(result)
-                cv2.waitKey(3000)
+                cv2.waitKey(500)
             
             acceptable = input("keep going : 1, adjust blur : 2, adjust size : 3       :: ")
             if acceptable == "2":
                 cv2.destroyAllWindows()
                 print("current blur : " , SegmentProcessor.BLUR_BIAS)
-                bias = input("- : minus 1, + : plus 1, 0 : ignore")
-                if bias == "-" : 
-                    bias = -1
-                elif bias == "+" : 
-                    bias = 1
-                else: 
-                    bias = 0
-                SegmentProcessor.BLUR_BIAS +=  bias
+                bias = input(" change to  : ")
+                bias = int(bias)
+                SegmentProcessor.BLUR_BIAS = bias
             elif acceptable == "3":
                 cv2.destroyAllWindows()
                 print("current size factor : " , SegmentProcessor.IMG_RESIZE)
@@ -423,23 +374,99 @@ if __name__ == "__main__":
         with open(VideoFrames.videoPath+".sslg.spec", "wb") as f:
             setting = [SegmentProcessor.BLUR_BIAS, SegmentProcessor.IMG_RESIZE]
             pk.dump(setting, f)
+        
+        with open(VideoFrames.videoPath+".sslg.spec.txt", "w") as f:
+            setting = [SegmentProcessor.BLUR_BIAS, SegmentProcessor.IMG_RESIZE]
+            f.write(str(setting))
 
 
 
-    #main progress.
-    print("data logging in progress...")
-    samples = VideoFrames.sampling(VideoFrames.frameCount//(VideoFrames.fps*SegmentProcessor.LOGGING_RATE))
-    logged = []
-    for i in range(len(samples)):
-        SegmentProcessor.img_change(samples[i])
-        result = SegmentProcessor.segment_getter()
-        if type(result) == type([]):
+#main progress.
+
+def mainprogress(id,vidPath, start, end,step,fps,dmin, dmax, result, pipeline):
+    rectpos = pipeline.recv()
+    SegmentProcessor.rectpos = rectpos
+    SegmentProcessor.digitMin = dmin
+    SegmentProcessor.digitMax = dmax
+    vid = cv2.VideoCapture(vidPath)
+    length = ((end - start) // step) + 1
+    for i in range(length):
+        orig_i = i
+        if i < length - 1:
+            i = i * step
+        else:
+            i = end - 1
+        vid.set(cv2.CAP_PROP_POS_FRAMES, i)
+        suc,img = vid.read()
+        if not suc:
+            raise Exception("index overflow." + str(i))
+        img = cv2.rotate(img, cv2.ROTATE_180)
+        number = SegmentProcessor.segment_getter(img, False)
+        if type(number) == type([]):
             continue
         else:
-            time = i * SegmentProcessor.LOGGING_RATE
-            logged.append((result, time))
+            time = i / fps
+            number = (number, time)    
+        result.put(number)  
+        if orig_i % 99 == 0:
+            print(id, int(100*(orig_i/length)))   
+    print(id, "done!")   
+        
+if __name__ == "__main__":
+    print("data logging in progress...")
+    logged = []
+    if VideoFrames.frameCount >1000:
+        GROUPED = 500
+        queues = []
+        threads = []
+        divided = VideoFrames.frameCount // GROUPED  
+        divided_time = GROUPED / VideoFrames.fps
+        for i in range(divided + 1):
+            start = i * GROUPED
+            end = 0
+            if i == divided:
+                end = VideoFrames.frameCount
+            else:
+                end = (i+1) * GROUPED
+            queues.append(Queue())
+            segmentprocessor_pipe_parent, segmentprocessor_pipe_child = Pipe()
+            segmentprocessor_pipe_parent.send(deepcopy(SegmentProcessor.rectpos))
+            threads.append(Process(target=mainprogress, args=(i, VideoFrames.videoPath ,start, end,
+                            int(VideoFrames.fps*SegmentProcessor.LOGGING_RATE), VideoFrames.fps,SegmentProcessor.digitMin, SegmentProcessor.digitMax
+                            , queues[i], segmentprocessor_pipe_child)))
+        for i in range(divided + 1):
+            threads[i].start()
+        for i in range(divided + 1):
+            threads[i].join()
+        for i in range(divided + 1):
+            queues[i].put("STOP")
+        for i in range(divided + 1):
+            while True:
+                got = queues[i].get()
+                if got == "STOP":
+                    break
+                else:
+                    got  = (got[0],got[1] + i*divided_time)
+                    logged.append(got)
+        print("got : ", len(logged), "would be :", VideoFrames.frameCount//(VideoFrames.fps*SegmentProcessor.LOGGING_RATE))
+    else:
+        samples = VideoFrames.preSampling(VideoFrames.frameCount//(VideoFrames.fps*SegmentProcessor.LOGGING_RATE))
+        for i in range(len(samples)):
+            img = samples[i]
+            result = SegmentProcessor.segment_getter(img, False)
+            if type(result) == type([]):
+                continue
+            else:
+                time = i * SegmentProcessor.LOGGING_RATE
+                logged.append((result, time))
 
+
+
+
+
+    #afterprocess. making csv.
     with open(VideoFrames.videoPath + "_result.csv", "w") as f:
+        print(logged[0])
         timestr = str(logged[0][1])
         for i in range(1,len(logged)):
             timestr += ","+str(logged[i][1])
