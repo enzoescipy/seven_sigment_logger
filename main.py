@@ -6,11 +6,16 @@ import matplotlib.pyplot as plt
 from imutils import contours as ctr
 import imutils
 from imutils.perspective import four_point_transform
+from tkinter import filedialog
+from tkinter import Tk
 plt.style.use('dark_background')
 
 
 class SegmentProcessor:
+    LOGGING_RATE = 0.1
+
     IMG_RESIZE = 8000
+
     BLUR_BIAS = 1
     DIGITS_LOOKUP = {
         (1, 1, 1, 0, 1, 1, 1): 0,
@@ -24,6 +29,8 @@ class SegmentProcessor:
         (1, 1, 1, 1, 1, 1, 1): 8,
         (1, 1, 1, 1, 0, 1, 1): 9
     }
+    GRAYOUT_METHOD = (1,0,0) #b, g, r order.
+    ROTATION = None
     REVERSE_COLOR = True
     THERSH_HOLD_GLOBAL = False
 
@@ -68,6 +75,7 @@ class SegmentProcessor:
         xnew = int(xs[0]*0.9)
         wnew = int(xs[-1]*1.1)
 
+        img_original = img_copied.copy()
         img = img_copied[ynew:hnew, xnew:wnew]
         height_old, width_old, c = img.shape
         img = imutils.resize(img, height=(1000))
@@ -88,6 +96,22 @@ class SegmentProcessor:
         cv2.imshow("image", img)
         cv2.waitKey(0)
 
+        print("WAIT!! is the image has to be rotated? 0: NO. keep going. -:counter-clockwise +:clockwise 1:flip")
+        img_original = four_point_transform(img_original, np.array(cls.rectpos).reshape(4,2))
+        cv2.imshow("image", img_original)
+        cv2.waitKey(0)
+        rotating = input("::  ")
+
+        if rotating == "-":
+            cls.ROTATION = cv2.ROTATE_90_COUNTERCLOCKWISE
+            print("image will be ROTATE_90_COUNTERCLOCKWISE")
+        elif rotating == "+":
+            cls.ROTATION = cv2.ROTATE_90_CLOCKWISE
+            print("image will be ROTATE_90_CLOCKWISE")
+        elif rotating == "1":
+            cls.ROTATION = cv2.ROTATE_180
+            print("image will be ROTATE_180")
+             
 
     @classmethod
     def segment_getter(cls):
@@ -95,8 +119,16 @@ class SegmentProcessor:
         height_now, w, c = img.shape
         rectpos_adjusted = np.array(cls.rectpos) * (height_now / 1000)
         img = four_point_transform(img, rectpos_adjusted.reshape(4,2))
+        if cls.ROTATION != None:
+            img = cv2.rotate(img, cls.ROTATION)
         #image preprocessing
         height, width, channel = img.shape
+        if cls.GRAYOUT_METHOD != (1,1,1):
+            for i in range(3):
+                switch = cls.GRAYOUT_METHOD[i]
+                if switch == 0:
+                    img[:,:,0] = np.zeros([img.shape[0],img.shape[1]])
+
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
 
@@ -168,9 +200,9 @@ class SegmentProcessor:
             area = d['w'] * d['h']
             ratio = d['w'] / d['h']
             
-            if d['h'] > height*0.7:
+            if d['h'] > height*0.7 and  ratio < 1:
                 d['idx'] = cnt
-                cnt += 1
+                cnt += 1 
                 possible_contours.append(d['contour'])
 
         temp_result = np.zeros((height, width, channel), dtype = np.uint8)
@@ -183,7 +215,6 @@ class SegmentProcessor:
         for c in digitCnts:
             # extract the digit ROI
             (x, y, w, h) = cv2.boundingRect(c)
-            reduce = 20
             roi = img_blur_thresh[y:y + h, x:x + w]
             # compute the width and height of each of the 7 segments
             # we are going to examine
@@ -276,19 +307,24 @@ class VideoFrames:
         
 
 
-    
+#pre-process and find vid path
+root = Tk()
+vidPath = filedialog.askopenfilename(initialdir="/", title="Select file",
+                                          filetypes=(("mp4 files", "*.mp4"),
+                                          ("all files", "*.*")))
+root.destroy()
 
-VideoFrames.vid_change("dot_removed.mp4")
+VideoFrames.vid_change(vidPath)
 VideoFrames.framestacking()
 
 TEST_NUM = 6
-sample = VideoFrames.sampling(TEST_NUM)
-SegmentProcessor.img_change(sample[TEST_NUM // 2])
+samples = VideoFrames.sampling(TEST_NUM)
+SegmentProcessor.img_change(samples[TEST_NUM // 2])
 SegmentProcessor.lcd_rect_setter()
 
 while True:
     for i in range(TEST_NUM):
-        SegmentProcessor.img_change(sample[i])
+        SegmentProcessor.img_change(samples[i])
         result = SegmentProcessor.segment_getter()
         if type(result) == type([]):
             sum = ""
@@ -330,3 +366,29 @@ with open(VideoFrames.videoPath+"_spec.txt", "w") as f:
     f.write(str(SegmentProcessor.IMG_RESIZE)+"\n")
 
 
+
+
+#main progress.
+samples = VideoFrames.sampling(VideoFrames.frameCount//(VideoFrames.fps*SegmentProcessor.LOGGING_RATE))
+logged = []
+for i in range(len(samples)):
+    SegmentProcessor.img_change(samples[i])
+    result = SegmentProcessor.segment_getter()
+    if type(result) == type([]):
+        continue
+    else:
+        time = i * SegmentProcessor.LOGGING_RATE
+        logged.append((result, time))
+
+with open(VideoFrames.videoPath + "_result.csv", "w") as f:
+    timestr = str(logged[0][1])
+    for i in range(1,len(logged)):
+        timestr += ","+str(logged[i][1])
+    f.write(timestr + "\n")
+
+
+
+    datastr = str(logged[0][0])
+    for i in range(1,len(logged)):
+        datastr += ","+str(logged[i][0])
+    f.write(datastr +"\n")
