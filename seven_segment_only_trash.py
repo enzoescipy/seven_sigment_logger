@@ -18,7 +18,7 @@ DIGITS_LOOKUP = {
 	(1, 1, 1, 1, 0, 1, 1): 9
 }
 
-image = cv2.imread("test1.jpg")
+image = cv2.imread("/example/test.jpg")
 
 #preprocess
 image = imutils.resize(image, height=500)

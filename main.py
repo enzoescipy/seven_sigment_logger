@@ -10,11 +10,13 @@ from tkinter import filedialog
 from tkinter import Tk
 from os.path import exists
 import pickle as pk
+from multiprocessing import Process, Queue
 plt.style.use('dark_background')
 
 
+
 class SegmentProcessor:
-    LOGGING_RATE = 0.1
+    LOGGING_RATE = 1.0
 
     IMG_RESIZE = 8000
 
@@ -286,8 +288,23 @@ class VideoFrames:
         cls.fps = cls.video.get(cv2.CAP_PROP_FPS)
         cls.frameCount = int(cls.video.get(cv2.CAP_PROP_FRAME_COUNT))
 
-
-        
+    @staticmethod
+    def work(id,vidPath, start, end, result, framesStack, framesCount):
+        count = start
+        vid_work = cv2.VideoCapture(vidPath)
+        vid_work.set(cv2.CAP_PROP_POS_FRAMES, start)
+        while True:
+            if (count >= end - 1):
+                print(id, start, count, "done!")
+                break
+            succes, image = vid_work.read()
+            if result == None:
+                framesStack.append(cv2.rotate(image, cv2.ROTATE_180))
+            else:
+                result.put(cv2.rotate(image, cv2.ROTATE_180))
+            count += 1
+            if count % 99 == 0:
+                print(id, int(100 * count / framesCount))   
 
     @classmethod
     def framestacking(cls):
@@ -296,16 +313,38 @@ class VideoFrames:
             with open(dir_vidframefile, "rb") as f:
                 cls.frames = pk.load(f)
                 return
-
-        count = 0
-        while True:
-            succes, image = cls.video.read()
-            if not succes:
-                break
-            cls.frames.append(cv2.rotate(image, cv2.ROTATE_180))
-            count += 1
-            if count % 99 == 0:
-                print(int(100 * count / cls.frameCount))
+        
+        if cls.frameCount > 1000:
+            if __name__ == "__main__":
+                GROUPED = 500
+                queues = []
+                threads = []
+                divided = cls.frameCount // GROUPED
+                for i in range(divided + 1):
+                    start = i * GROUPED
+                    end = 0
+                    if i == divided:
+                        end = cls.frameCount
+                    else:
+                        end = (i+1) * GROUPED
+                    queues.append(Queue())
+                    threads.append(Process(target=cls.work, args=(i, cls.videoPath ,start, end, queues[i], cls.frames, cls.frameCount)))
+                for i in range(divided + 1):
+                    threads[i].start()
+                for i in range(divided + 1):
+                    threads[i].join()
+                for i in range(divided + 1):
+                    queues[i].put("STOP")
+                for i in range(divided + 1):
+                    while True:
+                        got = queues[i].get()
+                        if got == "STOP":
+                            break
+                        else:
+                            cls.frames.append(got)
+                print("got : ", len(cls.frames), "would be :", cls.frameCount)
+        else:
+            cls.work(0,cls.videoPath, 0,cls.frameCount+1, None)
 
         with open(dir_vidframefile, "wb") as f:
             pk.dump(cls.frames, f)
@@ -321,90 +360,92 @@ class VideoFrames:
 
 
 #pre-process and find vid path
-root = Tk()
-vidPath = filedialog.askopenfilename(initialdir="/", title="Select file",
-                                          filetypes=(("mp4 files", "*.mp4"),
-                                          ("all files", "*.*")))
-root.destroy()
+if __name__ == "__main__":
+    root = Tk()
+    vidPath = filedialog.askopenfilename(initialdir="/", title="Select file",
+                                            filetypes=(("mp4 files", "*.mp4"),
+                                            ("all files", "*.*")))
+    root.destroy()
 
-VideoFrames.vid_change(vidPath)
-VideoFrames.framestacking()
+    VideoFrames.vid_change(vidPath)
+    VideoFrames.framestacking()
 
-TEST_NUM = 6
-samples = VideoFrames.sampling(TEST_NUM)
-SegmentProcessor.img_change(samples[TEST_NUM // 2])
-SegmentProcessor.lcd_rect_setter()
+    TEST_NUM = 6
+    samples = VideoFrames.sampling(TEST_NUM)
+    SegmentProcessor.img_change(samples[TEST_NUM // 2])
+    SegmentProcessor.lcd_rect_setter()
 
-if exists(VideoFrames.videoPath+".sslg.spec"):
-    with open(VideoFrames.videoPath+".sslg.spec", "rb") as f:
-        SegmentProcessor.BLUR_BIAS, SegmentProcessor.IMG_RESIZE = pk.load(f)
-else:
-    while True:
-        for i in range(TEST_NUM):
-            SegmentProcessor.img_change(samples[i])
-            result = SegmentProcessor.segment_getter()
-            if type(result) == type([]):
-                sum = ""
-                result.reverse()
-                for res in result:
-                    if res == -1:
-                        sum += "X"
-                        continue
-                    sum += str(res)
-                print(sum)
-            else:
-                print(result)
-            cv2.waitKey(3000)
-        
-        acceptable = input("keep going : 1, adjust blur : 2, adjust size : 3       :: ")
-        if acceptable == "2":
-            cv2.destroyAllWindows()
-            print("current blur : " , SegmentProcessor.BLUR_BIAS)
-            bias = input("- : minus 1, + : plus 1, 0 : ignore")
-            if bias == "-" : 
-                bias = -1
-            elif bias == "+" : 
-                bias = 1
-            else: 
-                bias = 0
-            SegmentProcessor.BLUR_BIAS +=  bias
-        elif acceptable == "3":
-            cv2.destroyAllWindows()
-            print("current size factor : " , SegmentProcessor.IMG_RESIZE)
-            bias = input("re-factor to (integer) : ")
-            SegmentProcessor.IMG_RESIZE = int(bias)
-        else:
-            break
-
-    print("done!", SegmentProcessor.BLUR_BIAS, SegmentProcessor.IMG_RESIZE)
-
-    with open(VideoFrames.videoPath+".sslg.spec", "wb") as f:
-        setting = [SegmentProcessor.BLUR_BIAS, SegmentProcessor.IMG_RESIZE]
-        pk.dump(setting, f)
-
-
-
-#main progress.
-samples = VideoFrames.sampling(VideoFrames.frameCount//(VideoFrames.fps*SegmentProcessor.LOGGING_RATE))
-logged = []
-for i in range(len(samples)):
-    SegmentProcessor.img_change(samples[i])
-    result = SegmentProcessor.segment_getter()
-    if type(result) == type([]):
-        continue
+    if exists(VideoFrames.videoPath+".sslg.spec"):
+        with open(VideoFrames.videoPath+".sslg.spec", "rb") as f:
+            settinglist = pk.load(f)
+            SegmentProcessor.BLUR_BIAS = settinglist[0]
+            SegmentProcessor.IMG_RESIZE = settinglist[1]
     else:
-        time = i * SegmentProcessor.LOGGING_RATE
-        logged.append((result, time))
+        while True:
+            for i in range(TEST_NUM):
+                SegmentProcessor.img_change(samples[i])
+                result = SegmentProcessor.segment_getter()
+                if type(result) == type([]):
+                    sum = ""
+                    result.reverse()
+                    for res in result:
+                        if res == -1:
+                            sum += "X"
+                            continue
+                        sum += str(res)
+                    print(sum)
+                else:
+                    print(result)
+                cv2.waitKey(3000)
+            
+            acceptable = input("keep going : 1, adjust blur : 2, adjust size : 3       :: ")
+            if acceptable == "2":
+                cv2.destroyAllWindows()
+                print("current blur : " , SegmentProcessor.BLUR_BIAS)
+                bias = input("- : minus 1, + : plus 1, 0 : ignore")
+                if bias == "-" : 
+                    bias = -1
+                elif bias == "+" : 
+                    bias = 1
+                else: 
+                    bias = 0
+                SegmentProcessor.BLUR_BIAS +=  bias
+            elif acceptable == "3":
+                cv2.destroyAllWindows()
+                print("current size factor : " , SegmentProcessor.IMG_RESIZE)
+                bias = input("re-factor to (integer) : ")
+                SegmentProcessor.IMG_RESIZE = int(bias)
+            else:
+                break
 
-with open(VideoFrames.videoPath + "_result.csv", "w") as f:
-    timestr = str(logged[0][1])
-    for i in range(1,len(logged)):
-        timestr += ","+str(logged[i][1])
-    f.write(timestr + "\n")
+        print("done!", SegmentProcessor.BLUR_BIAS, SegmentProcessor.IMG_RESIZE)
+
+        with open(VideoFrames.videoPath+".sslg.spec", "wb") as f:
+            setting = [SegmentProcessor.BLUR_BIAS, SegmentProcessor.IMG_RESIZE]
+            pk.dump(setting, f)
 
 
 
-    datastr = str(logged[0][0])
-    for i in range(1,len(logged)):
-        datastr += ","+str(logged[i][0])
-    f.write(datastr +"\n")
+    #main progress.
+    print("data logging in progress...")
+    samples = VideoFrames.sampling(VideoFrames.frameCount//(VideoFrames.fps*SegmentProcessor.LOGGING_RATE))
+    logged = []
+    for i in range(len(samples)):
+        SegmentProcessor.img_change(samples[i])
+        result = SegmentProcessor.segment_getter()
+        if type(result) == type([]):
+            continue
+        else:
+            time = i * SegmentProcessor.LOGGING_RATE
+            logged.append((result, time))
+
+    with open(VideoFrames.videoPath + "_result.csv", "w") as f:
+        timestr = str(logged[0][1])
+        for i in range(1,len(logged)):
+            timestr += ","+str(logged[i][1])
+        f.write(timestr + "\n")
+
+        datastr = str(logged[0][0])
+        for i in range(1,len(logged)):
+            datastr += ","+str(logged[i][0])
+        f.write(datastr +"\n")
