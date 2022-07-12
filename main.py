@@ -18,7 +18,7 @@ plt.style.use('dark_background')
 
 
 class SegmentProcessor:
-    LOGGING_RATE = 1
+    LOGGING_RATE = 2
 
     IMG_RESIZE = 8000
 
@@ -42,6 +42,8 @@ class SegmentProcessor:
     
     digitMin = -1
     digitMax = -1
+    MISSING_FAULT_LIMIT_E = 1.2
+    MISSING_FAULT_LIMIT_C = 0.2
 
     rectpos = []
 
@@ -210,7 +212,7 @@ class SegmentProcessor:
             area = d['w'] * d['h']
             ratio = d['w'] / d['h']
             
-            if d['h'] > height*0.7 and  ratio < 1:
+            if d['h'] > height*0.6 and  ratio < 1:
                 d['idx'] = cnt
                 cnt += 1 
                 possible_contours.append(d['contour'])
@@ -224,19 +226,23 @@ class SegmentProcessor:
             return []
         digits = []
 
-        #check if there are missing digits
+        #check if there are missing digits. (check the "empty space" lik  2X3)
         boxes = []
-        wid_sum = 0
+        wid_list = []
         x_list = []
         for c in digitCnts:
             # extract the digit ROI
             (x, y, w, h) = cv2.boundingRect(c)
             boxes.append((x, y, w, h))
         for box in boxes:
-            wid_sum += box[2]
+            wid_list.append(box[2])
             x_list.append(box[0])
         x_delta = max(x_list) - min(x_list)
-        if x_delta / wid_sum > 1.2:
+        if x_delta / sum(wid_list) > cls.MISSING_FAULT_LIMIT_E:
+            return []
+            
+        #check if there are missing digits. (check the "wrong coordinate" lik  23XX)
+        if (width - max(x_list) - wid_list[x_list.index(max(x_list))]) / width > cls.MISSING_FAULT_LIMIT_C:
             return []
 
         # loop over each of the digits
@@ -361,14 +367,14 @@ if __name__ == "__main__":
             for i in range(TEST_NUM):
                 result = SegmentProcessor.segment_getter(samples[i], True)
                 if type(result) == type([]):
-                    sum = ""
+                    sum_text = ""
                     result.reverse()
                     for res in result:
                         if res == -1:
-                            sum += "X"
+                            sum_text += "X"
                             continue
-                        sum += str(res)
-                    print(sum)
+                        sum_text += str(res)
+                    print(sum_text)
                 else:
                     print(result)
                 cv2.waitKey(500)
@@ -494,6 +500,7 @@ if __name__ == "__main__":
             datastr += ","+str(logged[i][0])
         f.write(datastr +"\n")
 
+    print(logged)
     logged = list(zip(*logged))
     plt.scatter(logged[1],logged[0])
     plt.show()
