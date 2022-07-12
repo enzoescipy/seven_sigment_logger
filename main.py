@@ -1,4 +1,5 @@
 from codecs import escape_encode
+from multiprocessing.sharedctypes import Value
 import cv2
 from copy import deepcopy
 import numpy as np
@@ -11,12 +12,13 @@ from tkinter import Tk
 from os.path import exists
 import pickle as pk
 from multiprocessing import Process, Queue, Pipe
+import matplotlib.pyplot as plt
 plt.style.use('dark_background')
 
 
 
 class SegmentProcessor:
-    LOGGING_RATE = 1.0
+    LOGGING_RATE = 1
 
     IMG_RESIZE = 8000
 
@@ -215,9 +217,27 @@ class SegmentProcessor:
 
         temp_result = np.zeros((height, width, channel), dtype = np.uint8)
 
-        digitCnts = ctr.sort_contours(possible_contours,
-            method="left-to-right")[0]
+        try:
+            digitCnts = ctr.sort_contours(possible_contours,
+                method="left-to-right")[0]
+        except ValueError:
+            return []
         digits = []
+
+        #check if there are missing digits
+        boxes = []
+        wid_sum = 0
+        x_list = []
+        for c in digitCnts:
+            # extract the digit ROI
+            (x, y, w, h) = cv2.boundingRect(c)
+            boxes.append((x, y, w, h))
+        for box in boxes:
+            wid_sum += box[2]
+            x_list.append(box[0])
+        x_delta = max(x_list) - min(x_list)
+        if x_delta / wid_sum > 1.2:
+            return []
 
         # loop over each of the digits
         for c in digitCnts:
@@ -305,7 +325,6 @@ class VideoFrames:
                 vid.set(cv2.CAP_PROP_POS_FRAMES, i)
                 suc, img = vid.read()
                 sampled.append(cv2.rotate(img, cv2.ROTATE_180))
-                cv2.imshow("preshow", imutils.resize(cv2.rotate(img, cv2.ROTATE_180), height=(1000)))
                 cv2.waitKey(10)
         cv2.destroyAllWindows()
         return sampled
@@ -393,7 +412,7 @@ def mainprogress(id,vidPath, start, end,step,fps,dmin, dmax, result, pipeline):
     for i in range(length):
         orig_i = i
         if i < length - 1:
-            i = i * step
+            i = i * step + start
         else:
             i = end - 1
         vid.set(cv2.CAP_PROP_POS_FRAMES, i)
@@ -408,15 +427,13 @@ def mainprogress(id,vidPath, start, end,step,fps,dmin, dmax, result, pipeline):
             time = i / fps
             number = (number, time)    
         result.put(number)  
-        if orig_i % 99 == 0:
-            print(id, int(100*(orig_i/length)))   
     print(id, "done!")   
         
 if __name__ == "__main__":
     print("data logging in progress...")
     logged = []
     if VideoFrames.frameCount >1000:
-        GROUPED = 500
+        GROUPED = 1000
         queues = []
         threads = []
         divided = VideoFrames.frameCount // GROUPED  
@@ -446,7 +463,6 @@ if __name__ == "__main__":
                 if got == "STOP":
                     break
                 else:
-                    got  = (got[0],got[1] + i*divided_time)
                     logged.append(got)
         print("got : ", len(logged), "would be :", VideoFrames.frameCount//(VideoFrames.fps*SegmentProcessor.LOGGING_RATE))
     else:
@@ -465,6 +481,7 @@ if __name__ == "__main__":
 
 
     #afterprocess. making csv.
+    logged.sort(key=lambda x:x[1])
     with open(VideoFrames.videoPath + "_result.csv", "w") as f:
         print(logged[0])
         timestr = str(logged[0][1])
@@ -476,3 +493,11 @@ if __name__ == "__main__":
         for i in range(1,len(logged)):
             datastr += ","+str(logged[i][0])
         f.write(datastr +"\n")
+
+    logged = list(zip(*logged))
+    plt.scatter(logged[1],logged[0])
+    plt.show()
+
+
+
+    
