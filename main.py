@@ -18,7 +18,7 @@ plt.style.use('dark_background')
 
 
 class SegmentProcessor:
-    LOGGING_RATE = 2
+    LOGGING_TIME_DIST = 2
 
     IMG_RESIZE = 8000
 
@@ -455,7 +455,7 @@ if __name__ == "__main__":
             segmentprocessor_pipe_parent, segmentprocessor_pipe_child = Pipe()
             segmentprocessor_pipe_parent.send(deepcopy(SegmentProcessor.rectpos))
             threads.append(Process(target=mainprogress, args=(i, VideoFrames.videoPath ,start, end,
-                            int(VideoFrames.fps*SegmentProcessor.LOGGING_RATE), VideoFrames.fps,SegmentProcessor.digitMin, SegmentProcessor.digitMax
+                            int(VideoFrames.fps*SegmentProcessor.LOGGING_TIME_DIST), VideoFrames.fps,SegmentProcessor.digitMin, SegmentProcessor.digitMax
                             , queues[i], segmentprocessor_pipe_child)))
         for i in range(divided + 1):
             threads[i].start()
@@ -470,16 +470,16 @@ if __name__ == "__main__":
                     break
                 else:
                     logged.append(got)
-        print("got : ", len(logged), "would be :", VideoFrames.frameCount//(VideoFrames.fps*SegmentProcessor.LOGGING_RATE))
+        print("got : ", len(logged), "would be :", VideoFrames.frameCount//(VideoFrames.fps*SegmentProcessor.LOGGING_TIME_DIST))
     else:
-        samples = VideoFrames.preSampling(VideoFrames.frameCount//(VideoFrames.fps*SegmentProcessor.LOGGING_RATE))
+        samples = VideoFrames.preSampling(VideoFrames.frameCount//(VideoFrames.fps*SegmentProcessor.LOGGING_TIME_DIST))
         for i in range(len(samples)):
             img = samples[i]
             result = SegmentProcessor.segment_getter(img, False)
             if type(result) == type([]):
                 continue
             else:
-                time = i * SegmentProcessor.LOGGING_RATE
+                time = i * SegmentProcessor.LOGGING_TIME_DIST
                 logged.append((result, time))
 
 
