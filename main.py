@@ -21,6 +21,11 @@ class SegmentProcessor:
     LOGGING_TIME_DIST = 2
 
     IMG_RESIZE = 8000
+    IMG_SHEER = 0.0
+    IMG_SHEER_MAT = np.array( [ [1,IMG_SHEER,0], 
+                                [0,1,0]  ],dtype = np.float32 )
+    DIGITS_HEIGHT_MAX = 0.8
+    DIGITS_HEIGHT_MIN = 0.5
 
     BLUR_BIAS = 1
     DIGITS_LOOKUP = {
@@ -56,16 +61,24 @@ class SegmentProcessor:
     def lcd_rect_setter(cls,image):
         cls.rectpos = []
         img = imutils.resize(image, height=(1000))
+        img = cv2.warpAffine(img, cls.IMG_SHEER_MAT, (0,0))
         img_copied = img.copy()
         #user select drawing range by clicking 4-pointed lcd rect.
         def on_mouse(event, x, y, flag, param):
             if event == cv2.EVENT_LBUTTONDOWN :
                 cls.rectpos.append([[x,y]])
                 cv2.circle(img, (x,y), 3, (0,255,0), -1)
+                if len(cls.rectpos) >= 2:
+                    cv2.line(img,cls.rectpos[-1][0],cls.rectpos[-2][0],(0,255,0),5)
                 cv2.imshow("image", img)
                 if len(cls.rectpos) == 4:
                     cv2.destroyAllWindows()
                     return
+            if len(cls.rectpos) >= 1:
+                imgcopied = img.copy()
+                cv2.line(imgcopied,cls.rectpos[-1][0],(x,y),(0,255,0),2)
+                cv2.imshow("image", imgcopied)
+
 
         cv2.namedWindow('image')
         cv2.setMouseCallback('image', on_mouse, img)
@@ -93,14 +106,23 @@ class SegmentProcessor:
         h,width_new, c = img.shape
         #user select drawing range by clicking 4-pointed lcd rect.
         cls.rectpos = []
+        oldpos = []
         def on_mouse(event, x, y, flag, param):
             if event == cv2.EVENT_LBUTTONDOWN :
                 cls.rectpos.append([[xnew + x/1000*height_old,ynew + y/width_new*width_old]])
+                oldpos.append((x,y))
                 cv2.circle(img, (x,y), 3, (0,255,0), -1)
+                if len(oldpos) >= 2:
+                    cv2.line(img,oldpos[-1],oldpos[-2],(0,255,0),5)
                 cv2.imshow("image", img)
                 if len(cls.rectpos) >= 4:
                     cv2.destroyAllWindows()
                     return
+            if len(oldpos) >= 1:
+                imgcopied = img.copy()
+                cv2.line(imgcopied,oldpos[-1],(x,y),(0,255,0),2)
+                cv2.imshow("image", imgcopied)
+
 
         cv2.namedWindow('image')
         cv2.setMouseCallback('image', on_mouse, img)
@@ -127,9 +149,11 @@ class SegmentProcessor:
     @classmethod
     def segment_getter(cls, img, test):
         img = imutils.resize(img, height=(cls.IMG_RESIZE))
+
         height_now, w, c = img.shape
         rectpos_adjusted = np.array(cls.rectpos) * (height_now / 1000)
         img = four_point_transform(img, rectpos_adjusted.reshape(4,2))
+        img = cv2.warpAffine(img, cls.IMG_SHEER_MAT, (0,0))
         if cls.ROTATION != None:
             img = cv2.rotate(img, cls.ROTATION)
         #image preprocessing
@@ -212,19 +236,19 @@ class SegmentProcessor:
             area = d['w'] * d['h']
             ratio = d['w'] / d['h']
             
-            if d['h'] > height*0.6 and  ratio < 1:
+            if ratio < 1 and cls.DIGITS_HEIGHT_MIN * height < d['h'] < cls.DIGITS_HEIGHT_MAX * height:
                 d['idx'] = cnt
                 cnt += 1 
                 possible_contours.append(d['contour'])
 
         temp_result = np.zeros((height, width, channel), dtype = np.uint8)
-
         try:
             digitCnts = ctr.sort_contours(possible_contours,
                 method="left-to-right")[0]
         except ValueError:
-            return []
+            return ["x"]
         digits = []
+
 
         #check if there are missing digits. (check the "empty space" lik  2X3)
         boxes = []
@@ -238,12 +262,12 @@ class SegmentProcessor:
             wid_list.append(box[2])
             x_list.append(box[0])
         x_delta = max(x_list) - min(x_list)
-        if x_delta / sum(wid_list) > cls.MISSING_FAULT_LIMIT_E:
-            return []
+        if x_delta / sum(wid_list) > cls.MISSING_FAULT_LIMIT_E and test != True:
+            return ["y"]
             
         #check if there are missing digits. (check the "wrong coordinate" lik  23XX)
-        if (width - max(x_list) - wid_list[x_list.index(max(x_list))]) / width > cls.MISSING_FAULT_LIMIT_C:
-            return []
+        if (width - max(x_list) - wid_list[x_list.index(max(x_list))]) / width > cls.MISSING_FAULT_LIMIT_C and test != True:
+            return ["z"]
 
         # loop over each of the digits
         for c in digitCnts:
@@ -278,6 +302,8 @@ class SegmentProcessor:
                 area = (xB - xA) * (yB - yA)
                 # if the total number of non-zero pixels is greater than
                 # 50% of the area, mark the segment as "on"
+                if area == 0.0:
+                    return ["zeroth"]
                 if total / float(area) > 0.5:
                     on[i]= 1
             # lookup the digit and draw it on the image
@@ -339,6 +365,7 @@ class VideoFrames:
 
 #pre-process and find vid path
 if __name__ == "__main__":
+    cv2.destroyAllWindows()
     root = Tk()
     vidPath = filedialog.askopenfilename(initialdir="/", title="Select file",
                                             filetypes=(("mp4 files", "*.mp4"),
@@ -362,6 +389,10 @@ if __name__ == "__main__":
             settinglist = pk.load(f)
             SegmentProcessor.BLUR_BIAS = settinglist[0]
             SegmentProcessor.IMG_RESIZE = settinglist[1]
+            SegmentProcessor.IMG_SHEER = settinglist[2]
+            SegmentProcessor.DIGITS_HEIGHT_MAX = settinglist[3]
+            SegmentProcessor.DIGITS_HEIGHT_MIN = settinglist[4]
+            
     else:
         while True:
             for i in range(TEST_NUM):
@@ -379,40 +410,63 @@ if __name__ == "__main__":
                     print(result)
                 cv2.waitKey(500)
             
-            acceptable = input("keep going : 1, adjust blur : 2, adjust size : 3       :: ")
+            acceptable = input("keep going : 1, adjust blur : 2, adjust size : 3, adjust sheering : 4, digit's height min : 5, adjust digit's height MAX : 6 \n      :: ")
             if acceptable == "2":
                 cv2.destroyAllWindows()
                 print("current blur : " , SegmentProcessor.BLUR_BIAS)
-                bias = input(" change to  : ")
-                bias = int(bias)
-                SegmentProcessor.BLUR_BIAS = bias
+                val = input(" change to  : ")
+                val = int(val)
+                SegmentProcessor.BLUR_BIAS = val
             elif acceptable == "3":
                 cv2.destroyAllWindows()
                 print("current size factor : " , SegmentProcessor.IMG_RESIZE)
-                bias = input("re-factor to (integer) : ")
-                SegmentProcessor.IMG_RESIZE = int(bias)
+                val = input("re-factor to (integer) : ")
+                SegmentProcessor.IMG_RESIZE = int(val)
+            elif acceptable == "4":
+                cv2.destroyAllWindows()
+                print("current sheer factor : " , SegmentProcessor.IMG_SHEER)
+                val = input("re-factor to (float) : ")
+                SegmentProcessor.IMG_SHEER = float(val)
+                SegmentProcessor.IMG_SHEER_MAT = np.array( [ [1,SegmentProcessor.IMG_SHEER,0], 
+                                                             [0,1,0]  ],dtype = np.float32 )
+            elif acceptable == "5":
+                cv2.destroyAllWindows()
+                print("current digit's height min : " , SegmentProcessor.DIGITS_HEIGHT_MIN)
+                val = input("re-factor to (float) : ")
+                SegmentProcessor.DIGITS_HEIGHT_MIN = float(val)
+            elif acceptable == "6":
+                cv2.destroyAllWindows()
+                print("current digit's height MAX : " , SegmentProcessor.DIGITS_HEIGHT_MAX)
+                val = input("re-factor to (float) : ")
+                SegmentProcessor.DIGITS_HEIGHT_MAX = float(val)
             else:
                 break
 
-        print("done!", SegmentProcessor.BLUR_BIAS, SegmentProcessor.IMG_RESIZE)
+        print("done!", SegmentProcessor.BLUR_BIAS, SegmentProcessor.IMG_RESIZE, SegmentProcessor.IMG_SHEER,SegmentProcessor.DIGITS_HEIGHT_MAX,SegmentProcessor.DIGITS_HEIGHT_MIN)
 
         with open(VideoFrames.videoPath+".sslg.spec", "wb") as f:
-            setting = [SegmentProcessor.BLUR_BIAS, SegmentProcessor.IMG_RESIZE]
+            setting = [SegmentProcessor.BLUR_BIAS, SegmentProcessor.IMG_RESIZE, SegmentProcessor.IMG_SHEER,SegmentProcessor.DIGITS_HEIGHT_MAX,SegmentProcessor.DIGITS_HEIGHT_MIN]
             pk.dump(setting, f)
         
         with open(VideoFrames.videoPath+".sslg.spec.txt", "w") as f:
-            setting = [SegmentProcessor.BLUR_BIAS, SegmentProcessor.IMG_RESIZE]
+            setting = [SegmentProcessor.BLUR_BIAS, SegmentProcessor.IMG_RESIZE, SegmentProcessor.IMG_SHEER,SegmentProcessor.DIGITS_HEIGHT_MAX,SegmentProcessor.DIGITS_HEIGHT_MIN]
             f.write(str(setting))
 
 
 
 #main progress.
 
-def mainprogress(id,vidPath, start, end,step,fps,dmin, dmax, result, pipeline):
+def mainprogress(id,vidPath, start, end,step,fps,dmin, dmax,
+                blurbias, imgresize, imgsheer, heightmax, heightmin, result, pipeline):
     rectpos = pipeline.recv()
     SegmentProcessor.rectpos = rectpos
     SegmentProcessor.digitMin = dmin
     SegmentProcessor.digitMax = dmax
+    SegmentProcessor.BLUR_BIAS = blurbias
+    SegmentProcessor.IMG_RESIZE = imgresize
+    SegmentProcessor.IMG_SHEER = imgsheer
+    SegmentProcessor.DIGITS_HEIGHT_MAX = heightmax
+    SegmentProcessor.DIGITS_HEIGHT_MIN = heightmin
     vid = cv2.VideoCapture(vidPath)
     length = ((end - start) // step) + 1
     for i in range(length):
@@ -437,6 +491,7 @@ def mainprogress(id,vidPath, start, end,step,fps,dmin, dmax, result, pipeline):
         
 if __name__ == "__main__":
     print("data logging in progress...")
+    cv2.destroyAllWindows()
     logged = []
     if VideoFrames.frameCount >1000:
         GROUPED = 1000
@@ -456,7 +511,8 @@ if __name__ == "__main__":
             segmentprocessor_pipe_parent.send(deepcopy(SegmentProcessor.rectpos))
             threads.append(Process(target=mainprogress, args=(i, VideoFrames.videoPath ,start, end,
                             int(VideoFrames.fps*SegmentProcessor.LOGGING_TIME_DIST), VideoFrames.fps,SegmentProcessor.digitMin, SegmentProcessor.digitMax
-                            , queues[i], segmentprocessor_pipe_child)))
+                            ,SegmentProcessor.BLUR_BIAS,SegmentProcessor.IMG_RESIZE,SegmentProcessor.IMG_SHEER,SegmentProcessor.DIGITS_HEIGHT_MAX,SegmentProcessor.DIGITS_HEIGHT_MIN, 
+                            queues[i], segmentprocessor_pipe_child)))
         for i in range(divided + 1):
             threads[i].start()
         for i in range(divided + 1):
