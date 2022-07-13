@@ -18,7 +18,7 @@ plt.style.use('dark_background')
 
 
 class SegmentProcessor:
-    LOGGING_TIME_DIST = 2
+    LOGGING_TIME_DIST = 1
 
     IMG_RESIZE = 8000
     IMG_SHEER = 0.0
@@ -373,6 +373,7 @@ if __name__ == "__main__":
     root.destroy()
 
     VideoFrames.vid_change(vidPath)
+    vidnum = input("vid number  (int) ::")
     #VideoFrames.framestacking_depracated() => moved to main progress for lowering memory load.
 
     TEST_NUM = 10
@@ -385,7 +386,7 @@ if __name__ == "__main__":
 
 
     if exists(VideoFrames.videoPath+".sslg.spec"):
-        with open(VideoFrames.videoPath+".sslg.spec", "rb") as f:
+        with open(VideoFrames.videoPath+vidnum+".sslg.spec", "rb") as f:
             settinglist = pk.load(f)
             SegmentProcessor.BLUR_BIAS = settinglist[0]
             SegmentProcessor.IMG_RESIZE = settinglist[1]
@@ -444,11 +445,11 @@ if __name__ == "__main__":
 
         print("done!", SegmentProcessor.BLUR_BIAS, SegmentProcessor.IMG_RESIZE, SegmentProcessor.IMG_SHEER,SegmentProcessor.DIGITS_HEIGHT_MAX,SegmentProcessor.DIGITS_HEIGHT_MIN)
 
-        with open(VideoFrames.videoPath+".sslg.spec", "wb") as f:
+        with open(VideoFrames.videoPath+vidnum+".sslg.spec", "wb") as f:
             setting = [SegmentProcessor.BLUR_BIAS, SegmentProcessor.IMG_RESIZE, SegmentProcessor.IMG_SHEER,SegmentProcessor.DIGITS_HEIGHT_MAX,SegmentProcessor.DIGITS_HEIGHT_MIN]
             pk.dump(setting, f)
         
-        with open(VideoFrames.videoPath+".sslg.spec.txt", "w") as f:
+        with open(VideoFrames.videoPath+vidnum+".sslg.spec.txt", "w") as f:
             setting = [SegmentProcessor.BLUR_BIAS, SegmentProcessor.IMG_RESIZE, SegmentProcessor.IMG_SHEER,SegmentProcessor.DIGITS_HEIGHT_MAX,SegmentProcessor.DIGITS_HEIGHT_MIN]
             f.write(str(setting))
 
@@ -544,7 +545,7 @@ if __name__ == "__main__":
 
     #afterprocess. making csv.
     logged.sort(key=lambda x:x[1])
-    with open(VideoFrames.videoPath + "_result.csv", "w") as f:
+    with open(VideoFrames.videoPath +vidnum+ "_result.csv", "w") as f:
         print(logged[0])
         timestr = str(logged[0][1])
         for i in range(1,len(logged)):
