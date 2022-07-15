@@ -15,7 +15,6 @@ vidPath = filedialog.askopenfilename(initialdir="/", title="Select file",
 while True:
     logged = []
 
-
     root = Tk()
 
     root.destroy()

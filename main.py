@@ -6,7 +6,20 @@ import numpy as np
 import matplotlib.pyplot as plt
 from imutils import contours as ctr
 import imutils
-from imutils.perspective import four_point_transform
+def four_point_transform(img, src_pts):
+
+    def get_euler_distance(pt1, pt2):
+        return ((pt1[0] - pt2[0])**2 + (pt1[1] - pt2[1])**2)**0.5
+
+    src_pts = np.array(src_pts, dtype=np.float32)
+    width = get_euler_distance(src_pts[0], src_pts[1])
+    height = get_euler_distance(src_pts[0], src_pts[3])
+
+    dst_pts = np.array([[0, 0],   [width, 0],  [width, height], [0, height]], dtype=np.float32)
+
+    M = cv2.getPerspectiveTransform(src_pts, dst_pts)
+    warp = cv2.warpPerspective(img, M, (int(width), int(height)))
+    return warp
 from tkinter import filedialog
 from tkinter import Tk
 from os.path import exists
@@ -16,9 +29,10 @@ import matplotlib.pyplot as plt
 plt.style.use('dark_background')
 
 
-
 class SegmentProcessor:
-    LOGGING_TIME_DIST = 1
+    LOGGING_TIME_DIST = 0.2
+    LOGGING_TIME_CUT_LOWER = 0
+    LOGGING_TIME_CUT_UPPER = 50
 
     IMG_RESIZE = 8000
     IMG_SHEER = 0.0
@@ -50,6 +64,8 @@ class SegmentProcessor:
     MISSING_FAULT_LIMIT_E = 1.2
     MISSING_FAULT_LIMIT_C = 0.2
 
+    THRESH_IF_ONE = 3
+
     rectpos = []
 
     @classmethod
@@ -66,17 +82,17 @@ class SegmentProcessor:
         #user select drawing range by clicking 4-pointed lcd rect.
         def on_mouse(event, x, y, flag, param):
             if event == cv2.EVENT_LBUTTONDOWN :
-                cls.rectpos.append([[x,y]])
+                cls.rectpos.append([x,y])
                 cv2.circle(img, (x,y), 3, (0,255,0), -1)
                 if len(cls.rectpos) >= 2:
-                    cv2.line(img,cls.rectpos[-1][0],cls.rectpos[-2][0],(0,255,0),5)
+                    cv2.line(img,cls.rectpos[-1],cls.rectpos[-2],(0,255,0),5)
                 cv2.imshow("image", img)
                 if len(cls.rectpos) == 4:
                     cv2.destroyAllWindows()
                     return
             if len(cls.rectpos) >= 1:
                 imgcopied = img.copy()
-                cv2.line(imgcopied,cls.rectpos[-1][0],(x,y),(0,255,0),2)
+                cv2.line(imgcopied,cls.rectpos[-1],(x,y),(0,255,0),2)
                 cv2.imshow("image", imgcopied)
 
 
@@ -89,7 +105,6 @@ class SegmentProcessor:
         xs = []
         ys = []
         for point in cls.rectpos:
-            point = point[0]
             xs.append(point[0])
             ys.append(point[1])
         xs.sort()
@@ -109,7 +124,7 @@ class SegmentProcessor:
         oldpos = []
         def on_mouse(event, x, y, flag, param):
             if event == cv2.EVENT_LBUTTONDOWN :
-                cls.rectpos.append([[xnew + x/1000*height_old,ynew + y/width_new*width_old]])
+                cls.rectpos.append([xnew + x/1000*height_old,ynew + y/width_new*width_old])
                 oldpos.append((x,y))
                 cv2.circle(img, (x,y), 3, (0,255,0), -1)
                 if len(oldpos) >= 2:
@@ -130,11 +145,12 @@ class SegmentProcessor:
         cv2.waitKey(0)
 
         print("WAIT!! is the image has to be rotated? 0: NO. keep going. -:counter-clockwise +:clockwise 1:flip")
-        img_original = four_point_transform(img_original, np.array(cls.rectpos).reshape(4,2))
+        img_original = four_point_transform(img_original, cls.rectpos)
         cv2.imshow("image", img_original)
         cv2.waitKey(0)
         rotating = input("::  ")
-
+        cls.ROTATION = None
+        cls.MIRROR = None
         if rotating == "-":
             cls.ROTATION = cv2.ROTATE_90_COUNTERCLOCKWISE
             print("image will be ROTATE_90_COUNTERCLOCKWISE")
@@ -144,6 +160,16 @@ class SegmentProcessor:
         elif rotating == "1":
             cls.ROTATION = cv2.ROTATE_180
             print("image will be ROTATE_180")
+        
+        print("WAIT!! is the image has to be mirrored? 0: NO. keep going. -: RL flip, +: UD flip")
+        cv2.rotate(img_original, cls.ROTATION)
+        cv2.imshow("image", img_original)
+        cv2.waitKey(0)
+        mirroring = input("::  ")
+        if mirroring == "-":
+            cls.MIRROR = 1
+        elif mirroring == "+":
+            cls.MIRROR = 0
              
 
     @classmethod
@@ -152,10 +178,12 @@ class SegmentProcessor:
 
         height_now, w, c = img.shape
         rectpos_adjusted = np.array(cls.rectpos) * (height_now / 1000)
-        img = four_point_transform(img, rectpos_adjusted.reshape(4,2))
+        img = four_point_transform(img, rectpos_adjusted)
         img = cv2.warpAffine(img, cls.IMG_SHEER_MAT, (0,0))
         if cls.ROTATION != None:
             img = cv2.rotate(img, cls.ROTATION)
+        if cls.MIRROR != None:
+            img = cv2.flip(img, cls.MIRROR)
         #image preprocessing
         height, width, channel = img.shape
         if cls.GRAYOUT_METHOD != (1,1,1):
@@ -248,7 +276,7 @@ class SegmentProcessor:
         for c in digitCnts:
             # extract the digit ROI
             (x, y, w, h) = cv2.boundingRect(c)
-            if h/w >= 2.0:
+            if h/w >= cls.THRESH_IF_ONE:
                 digit = 1
                 digits.append(digit)
                 if test == True:
@@ -333,10 +361,14 @@ class VideoFrames:
     
     @classmethod        
     def preSampling(cls, amount):
-        mod = cls.frameCount // amount
+        bias = int(cls.fps * SegmentProcessor.LOGGING_TIME_CUT_LOWER)
+        endframe = int(cls.frameCount - cls.fps * SegmentProcessor.LOGGING_TIME_CUT_UPPER)
+        if SegmentProcessor.LOGGING_TIME_CUT_UPPER == -1:
+            endframe = cls.frameCount
+        mod = (endframe - bias) // amount
         vid = cv2.VideoCapture(cls.videoPath)
         sampled = []
-        for i in range(cls.frameCount):
+        for i in range(bias, endframe):
             if i % mod == 0:
                 vid.set(cv2.CAP_PROP_POS_FRAMES, i)
                 suc, img = vid.read()
@@ -398,7 +430,7 @@ if __name__ == "__main__":
                 cv2.waitKey(100)
             acceptable = ""
             while True:
-                acceptable = input("check again : any, start process : 1, adjust blur : 2, adjust size : 3, adjust sheering : 4, digit's height min : 5,\n adjust digit's height MAX : 6, adjust FAULT_LIMIT (e, 2X45) : 7, adjust FAULT_LIMIT (c, 24XX) : 8 \n      :: ")
+                acceptable = input("check again : any, start process : 1, adjust blur : 2, adjust size : 3, adjust sheering : 4, digit's height min : 5,\n adjust digit's height MAX : 6, adjust FAULT_LIMIT (e, 2X45) : 7, adjust FAULT_LIMIT (c, 24XX) : 8, adjust THRESH_IF_ONE : 9 \n      :: ")
                 if acceptable == "1":
                     break
                 elif acceptable == "2":
@@ -439,6 +471,11 @@ if __name__ == "__main__":
                     print("current c_threshHold (1~0 ratio, left blank is bigger than ratio, then faulted.) : " , SegmentProcessor.MISSING_FAULT_LIMIT_C)
                     val = input("re-factor to (float) : ")
                     SegmentProcessor.MISSING_FAULT_LIMIT_C = float(val)
+                elif acceptable == "9":
+                    cv2.destroyAllWindows()
+                    print("current one-determine ThreshHold (if h/w bigger then determines digit to one.) : " , SegmentProcessor.MISSING_FAULT_LIMIT_C)
+                    val = input("re-factor to (float) : ")
+                    SegmentProcessor.THRESH_IF_ONE = float(val)
                 else:
                     break
             if acceptable == "1":
@@ -460,7 +497,7 @@ if __name__ == "__main__":
 
 def mainprogress(id,vidPath, start, end,step,fps,dmin, dmax,
                 blurbias, imgresize, imgsheer, heightmax, heightmin, 
-                faulte, faultc, result, pipeline):
+                faulte, faultc,onethresh,rotation, mirror, result, pipeline):
     rectpos = pipeline.recv()
     SegmentProcessor.rectpos = rectpos
     SegmentProcessor.digitMin = dmin
@@ -475,6 +512,9 @@ def mainprogress(id,vidPath, start, end,step,fps,dmin, dmax,
 
     SegmentProcessor.MISSING_FAULT_LIMIT_E = faulte
     SegmentProcessor.MISSING_FAULT_LIMIT_C = faultc
+    SegmentProcessor.THRESH_IF_ONE = onethresh
+    SegmentProcessor.MIRROR = mirror
+    SegmentProcessor.ROTATION = rotation
     vid = cv2.VideoCapture(vidPath)
     length = ((end - start) // step) + 1
     for i in range(length):
@@ -503,13 +543,17 @@ if __name__ == "__main__":
         GROUPED = 1000
         queues = []
         threads = []
-        divided = VideoFrames.frameCount // GROUPED  
+        bias = int(VideoFrames.fps * SegmentProcessor.LOGGING_TIME_CUT_LOWER)
+        endframe = int(VideoFrames.frameCount - VideoFrames.fps * SegmentProcessor.LOGGING_TIME_CUT_UPPER)
+        if SegmentProcessor.LOGGING_TIME_CUT_UPPER == -1:
+            endframe = VideoFrames.frameCount
+        divided = (endframe - bias) // GROUPED  
         divided_time = GROUPED / VideoFrames.fps
         for i in range(divided + 1):
-            start = i * GROUPED
+            start = i * GROUPED + bias
             end = 0
             if i == divided:
-                end = VideoFrames.frameCount
+                end = endframe
             else:
                 end = (i+1) * GROUPED
             queues.append(Queue())
@@ -518,7 +562,8 @@ if __name__ == "__main__":
             threads.append(Process(target=mainprogress, args=(i, VideoFrames.videoPath ,start, end,
                             int(VideoFrames.fps*SegmentProcessor.LOGGING_TIME_DIST), VideoFrames.fps,SegmentProcessor.digitMin, SegmentProcessor.digitMax
                             ,SegmentProcessor.BLUR_BIAS,SegmentProcessor.IMG_RESIZE,SegmentProcessor.IMG_SHEER,SegmentProcessor.DIGITS_HEIGHT_MAX,SegmentProcessor.DIGITS_HEIGHT_MIN, 
-                            SegmentProcessor.MISSING_FAULT_LIMIT_E,SegmentProcessor.MISSING_FAULT_LIMIT_C, queues[i], segmentprocessor_pipe_child)))
+                            SegmentProcessor.MISSING_FAULT_LIMIT_E,SegmentProcessor.MISSING_FAULT_LIMIT_C,SegmentProcessor.THRESH_IF_ONE,
+                            SegmentProcessor.ROTATION,SegmentProcessor.MIRROR, queues[i], segmentprocessor_pipe_child)))
         for i in range(divided + 1):
             threads[i].start()
         for i in range(divided + 1):
