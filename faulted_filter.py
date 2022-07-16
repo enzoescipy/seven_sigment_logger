@@ -22,8 +22,16 @@ while True:
     fig, ax = plt.subplots()
 
     with open(vidPath, "r") as f:
-        times = list(map(float,f.readline()[:-1].split(",")))
-        datas = list(map(float,f.readline()[:-1].split(",")))
+        times = f.readline()[:-1].split(",")
+        datas = f.readline()[:-1].split(",")
+        while True:
+            try:
+                times.remove("")
+                datas.remove("")
+            except ValueError:
+                break
+        times = list(map(float,times))
+        datas = list(map(float,datas))
         logged = list(zip(times, datas))
     ax.plot(times,datas)
     i=0

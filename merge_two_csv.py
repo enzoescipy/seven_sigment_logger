@@ -54,10 +54,13 @@ fig, ax = plt.subplots()
 
 ax.plot(times,datas)
 plt.show()
-
+vidPath = filename = filedialog.asksaveasfilename(
+                defaultextension='.csv', filetypes=[("csv files", '*.csv')],
+                initialdir="/",
+                title="Choose filename")
 print("save result? y : yes, n : no")
 if input(":") == "y":
-    with open(vidPath+vid1name+".csv", "w") as f:
+    with open(vidPath, "w") as f:
         timestr = str(logged[0][0])
         for i in range(1,len(logged)):
             timestr += ","+str(logged[i][0])

@@ -30,18 +30,18 @@ plt.style.use('dark_background')
 
 
 class SegmentProcessor:
-    LOGGING_TIME_DIST = 0.2
+    LOGGING_TIME_DIST = 0.93
     LOGGING_TIME_CUT_LOWER = 0
-    LOGGING_TIME_CUT_UPPER = 50
+    LOGGING_TIME_CUT_UPPER = -1 #-1 : no bound, 50 :  50s upperbound
 
-    IMG_RESIZE = 8000
+    IMG_RESIZE = 4000
     IMG_SHEER = 0.0
     IMG_SHEER_MAT = np.array( [ [1,IMG_SHEER,0], 
                                 [0,1,0]  ],dtype = np.float32 )
-    DIGITS_HEIGHT_MAX = 0.8
-    DIGITS_HEIGHT_MIN = 0.5
+    DIGITS_HEIGHT_MAX = 1.01
+    DIGITS_HEIGHT_MIN = 0.65
 
-    BLUR_BIAS = 1
+    BLUR_BIAS = 8
     DIGITS_LOOKUP = {
         (1, 1, 1, 0, 1, 1, 1): 0,
         (0, 0, 1, 0, 0, 1, 0): 1,
@@ -144,13 +144,26 @@ class SegmentProcessor:
         cv2.imshow("image", img)
         cv2.waitKey(0)
 
-        print("WAIT!! is the image has to be rotated? 0: NO. keep going. -:counter-clockwise +:clockwise 1:flip")
         img_original = four_point_transform(img_original, cls.rectpos)
+
+        cls.ROTATION = None
+        cls.MIRROR = None
+
+        print("WAIT!! is the image has to be mirrored? 0: NO. keep going. 1: YES. mirror and going.")
+        cv2.imshow("image", img_original)
+        cv2.waitKey(0)
+        mirroring = input("::  ")
+        if mirroring == "1":
+            cls.MIRROR = 1
+
+        if cls.MIRROR != None:
+            img_original = cv2.flip(img_original, cls.MIRROR)
+
+        print("WAIT!! is the image has to be rotated? 0: NO. keep going. -:counter-clockwise +:clockwise 1:flip")
         cv2.imshow("image", img_original)
         cv2.waitKey(0)
         rotating = input("::  ")
-        cls.ROTATION = None
-        cls.MIRROR = None
+
         if rotating == "-":
             cls.ROTATION = cv2.ROTATE_90_COUNTERCLOCKWISE
             print("image will be ROTATE_90_COUNTERCLOCKWISE")
@@ -161,16 +174,7 @@ class SegmentProcessor:
             cls.ROTATION = cv2.ROTATE_180
             print("image will be ROTATE_180")
         
-        print("WAIT!! is the image has to be mirrored? 0: NO. keep going. -: RL flip, +: UD flip")
-        cv2.rotate(img_original, cls.ROTATION)
-        cv2.imshow("image", img_original)
-        cv2.waitKey(0)
-        mirroring = input("::  ")
-        if mirroring == "-":
-            cls.MIRROR = 1
-        elif mirroring == "+":
-            cls.MIRROR = 0
-             
+
 
     @classmethod
     def segment_getter(cls, img, test):
@@ -179,11 +183,15 @@ class SegmentProcessor:
         height_now, w, c = img.shape
         rectpos_adjusted = np.array(cls.rectpos) * (height_now / 1000)
         img = four_point_transform(img, rectpos_adjusted)
-        img = cv2.warpAffine(img, cls.IMG_SHEER_MAT, (0,0))
-        if cls.ROTATION != None:
-            img = cv2.rotate(img, cls.ROTATION)
         if cls.MIRROR != None:
             img = cv2.flip(img, cls.MIRROR)
+        if cls.ROTATION != None:
+            img = cv2.rotate(img, cls.ROTATION)
+        img = cv2.warpAffine(img, cls.IMG_SHEER_MAT, (0,0))
+
+
+
+
         #image preprocessing
         height, width, channel = img.shape
         if cls.GRAYOUT_METHOD != (1,1,1):
@@ -362,8 +370,8 @@ class VideoFrames:
     @classmethod        
     def preSampling(cls, amount):
         bias = int(cls.fps * SegmentProcessor.LOGGING_TIME_CUT_LOWER)
-        endframe = int(cls.frameCount - cls.fps * SegmentProcessor.LOGGING_TIME_CUT_UPPER)
-        if SegmentProcessor.LOGGING_TIME_CUT_UPPER == -1:
+        endframe = int(cls.fps * SegmentProcessor.LOGGING_TIME_CUT_UPPER)
+        if int(SegmentProcessor.LOGGING_TIME_CUT_UPPER) == -1:
             endframe = cls.frameCount
         mod = (endframe - bias) // amount
         vid = cv2.VideoCapture(cls.videoPath)
@@ -399,8 +407,8 @@ if __name__ == "__main__":
     SegmentProcessor.setDigitRange(digitMin, digitMax)
 
 
-    if exists(VideoFrames.videoPath+".sslg.spec"):
-        with open(VideoFrames.videoPath+vidnum+".sslg.spec", "rb") as f:
+    if exists("basic_setting.spec"):
+        with open("basic_setting.spec", "rb") as f:
             settinglist = pk.load(f)
             SegmentProcessor.BLUR_BIAS = settinglist[0]
             SegmentProcessor.IMG_RESIZE = settinglist[1]
@@ -408,96 +416,106 @@ if __name__ == "__main__":
             SegmentProcessor.DIGITS_HEIGHT_MAX = settinglist[3]
             SegmentProcessor.DIGITS_HEIGHT_MIN = settinglist[4]
             SegmentProcessor.MISSING_FAULT_LIMIT_C = settinglist[5]
-            SegmentProcessor.MISSING_FAULT_LIMIT_C = settinglist[6]
-            
+            SegmentProcessor.MISSING_FAULT_LIMIT_E = settinglist[6]
+            SegmentProcessor.LOGGING_TIME_DIST = settinglist[7]
+            SegmentProcessor.LOGGING_TIME_CUT_LOWER = settinglist[8]
+            SegmentProcessor.LOGGING_TIME_CUT_UPPER = settinglist[9]
     else:
+        with open("basic_setting.spec", "wb") as f:
+            settinglist = []
+            settinglist.append(SegmentProcessor.BLUR_BIAS)
+            settinglist.append(SegmentProcessor.IMG_RESIZE)
+            settinglist.append(SegmentProcessor.IMG_SHEER)
+            settinglist.append(SegmentProcessor.DIGITS_HEIGHT_MAX)
+            settinglist.append(SegmentProcessor.DIGITS_HEIGHT_MIN)
+            settinglist.append(SegmentProcessor.MISSING_FAULT_LIMIT_C)
+            settinglist.append(SegmentProcessor.MISSING_FAULT_LIMIT_E)
+            settinglist.append(SegmentProcessor.LOGGING_TIME_DIST)
+            settinglist.append(SegmentProcessor.LOGGING_TIME_CUT_LOWER)
+            settinglist.append(SegmentProcessor.LOGGING_TIME_CUT_UPPER)
+            pk.dump(settinglist,f)
+    while True:
+        for i in range(TEST_NUM):
+            result = SegmentProcessor.segment_getter(samples[i], True)
+            if type(result) == type([]):
+                sum_text = ""
+                if len(result) == 1:
+                    sum_text = str(result[0])
+                result.reverse()  
+                for res in result:
+                    if res == -1:
+                        sum_text += "X"
+                        continue
+                    sum_text += str(res)
+                print(sum_text)
+            else:
+                print(result)
+            cv2.waitKey(100)
+        acceptable = ""
         while True:
-            for i in range(TEST_NUM):
-                result = SegmentProcessor.segment_getter(samples[i], True)
-                if type(result) == type([]):
-                    sum_text = ""
-                    if len(result) == 1:
-                        sum_text = str(result[0])
-                    result.reverse()  
-                    for res in result:
-                        if res == -1:
-                            sum_text += "X"
-                            continue
-                        sum_text += str(res)
-                    print(sum_text)
-                else:
-                    print(result)
-                cv2.waitKey(100)
-            acceptable = ""
-            while True:
-                acceptable = input("check again : any, start process : 1, adjust blur : 2, adjust size : 3, adjust sheering : 4, digit's height min : 5,\n adjust digit's height MAX : 6, adjust FAULT_LIMIT (e, 2X45) : 7, adjust FAULT_LIMIT (c, 24XX) : 8, adjust THRESH_IF_ONE : 9 \n      :: ")
-                if acceptable == "1":
-                    break
-                elif acceptable == "2":
-                    cv2.destroyAllWindows()
-                    print("current blur : " , SegmentProcessor.BLUR_BIAS)
-                    val = input(" change to  : ")
-                    val = int(val)
-                    SegmentProcessor.BLUR_BIAS = val
-                elif acceptable == "3":
-                    cv2.destroyAllWindows()
-                    print("current size factor : " , SegmentProcessor.IMG_RESIZE)
-                    val = input("re-factor to (integer) : ")
-                    SegmentProcessor.IMG_RESIZE = int(val)
-                elif acceptable == "4":
-                    cv2.destroyAllWindows()
-                    print("current sheer factor : " , SegmentProcessor.IMG_SHEER)
-                    val = input("re-factor to (float) : ")
-                    SegmentProcessor.IMG_SHEER = float(val)
-                    SegmentProcessor.IMG_SHEER_MAT = np.array( [ [1,SegmentProcessor.IMG_SHEER,0], 
-                                                                [0,1,0]  ],dtype = np.float32 )
-                elif acceptable == "5":
-                    cv2.destroyAllWindows()
-                    print("current digit's height min : " , SegmentProcessor.DIGITS_HEIGHT_MIN)
-                    val = input("re-factor to (float) : ")
-                    SegmentProcessor.DIGITS_HEIGHT_MIN = float(val)
-                elif acceptable == "6":
-                    cv2.destroyAllWindows()
-                    print("current digit's height MAX : " , SegmentProcessor.DIGITS_HEIGHT_MAX)
-                    val = input("re-factor to (float) : ")
-                    SegmentProcessor.DIGITS_HEIGHT_MAX = float(val)
-                elif acceptable == "7":
-                    cv2.destroyAllWindows()
-                    print("current e_threshHold (1~0 ratio, digit's distance is bigger than ratio, then faulted.) : " , SegmentProcessor.MISSING_FAULT_LIMIT_E)
-                    val = input("re-factor to (float) : ")
-                    SegmentProcessor.MISSING_FAULT_LIMIT_E = float(val)
-                elif acceptable == "8":
-                    cv2.destroyAllWindows()
-                    print("current c_threshHold (1~0 ratio, left blank is bigger than ratio, then faulted.) : " , SegmentProcessor.MISSING_FAULT_LIMIT_C)
-                    val = input("re-factor to (float) : ")
-                    SegmentProcessor.MISSING_FAULT_LIMIT_C = float(val)
-                elif acceptable == "9":
-                    cv2.destroyAllWindows()
-                    print("current one-determine ThreshHold (if h/w bigger then determines digit to one.) : " , SegmentProcessor.MISSING_FAULT_LIMIT_C)
-                    val = input("re-factor to (float) : ")
-                    SegmentProcessor.THRESH_IF_ONE = float(val)
-                else:
-                    break
+            acceptable = input("check again : any, start process : 1, adjust blur : 2, adjust size : 3, adjust sheering : 4, digit's height min : 5,\n adjust digit's height MAX : 6, adjust FAULT_LIMIT (e, 2X45) : 7, adjust FAULT_LIMIT (c, 24XX) : 8, adjust THRESH_IF_ONE : 9 \n      :: ")
             if acceptable == "1":
                 break
+            elif acceptable == "2":
+                cv2.destroyAllWindows()
+                print("current blur : " , SegmentProcessor.BLUR_BIAS)
+                val = input(" change to  : ")
+                val = int(val)
+                SegmentProcessor.BLUR_BIAS = val
+            elif acceptable == "3":
+                cv2.destroyAllWindows()
+                print("current size factor : " , SegmentProcessor.IMG_RESIZE)
+                val = input("re-factor to (integer) : ")
+                SegmentProcessor.IMG_RESIZE = int(val)
+            elif acceptable == "4":
+                cv2.destroyAllWindows()
+                print("current sheer factor : " , SegmentProcessor.IMG_SHEER)
+                val = input("re-factor to (float) : ")
+                SegmentProcessor.IMG_SHEER = float(val)
+                SegmentProcessor.IMG_SHEER_MAT = np.array( [ [1,SegmentProcessor.IMG_SHEER,0], 
+                                                            [0,1,0]  ],dtype = np.float32 )
+            elif acceptable == "5":
+                cv2.destroyAllWindows()
+                print("current digit's height min : " , SegmentProcessor.DIGITS_HEIGHT_MIN)
+                val = input("re-factor to (float) : ")
+                SegmentProcessor.DIGITS_HEIGHT_MIN = float(val)
+            elif acceptable == "6":
+                cv2.destroyAllWindows()
+                print("current digit's height MAX : " , SegmentProcessor.DIGITS_HEIGHT_MAX)
+                val = input("re-factor to (float) : ")
+                SegmentProcessor.DIGITS_HEIGHT_MAX = float(val)
+            elif acceptable == "7":
+                cv2.destroyAllWindows()
+                print("current e_threshHold (1~0 ratio, digit's distance is bigger than ratio, then faulted.) : " , SegmentProcessor.MISSING_FAULT_LIMIT_E)
+                val = input("re-factor to (float) : ")
+                SegmentProcessor.MISSING_FAULT_LIMIT_E = float(val)
+            elif acceptable == "8":
+                cv2.destroyAllWindows()
+                print("current c_threshHold (1~0 ratio, left blank is bigger than ratio, then faulted.) : " , SegmentProcessor.MISSING_FAULT_LIMIT_C)
+                val = input("re-factor to (float) : ")
+                SegmentProcessor.MISSING_FAULT_LIMIT_C = float(val)
+            elif acceptable == "9":
+                cv2.destroyAllWindows()
+                print("current one-determine ThreshHold (if h/w bigger then determines digit to one.) : " , SegmentProcessor.THRESH_IF_ONE)
+                val = input("re-factor to (float) : ")
+                SegmentProcessor.THRESH_IF_ONE = float(val)
+            else:
+                break
+        if acceptable == "1":
+            break
 
-        print("done!", SegmentProcessor.BLUR_BIAS, SegmentProcessor.IMG_RESIZE, SegmentProcessor.IMG_SHEER,SegmentProcessor.DIGITS_HEIGHT_MAX,SegmentProcessor.DIGITS_HEIGHT_MIN,SegmentProcessor.MISSING_FAULT_LIMIT_C, SegmentProcessor.MISSING_FAULT_LIMIT_E)
-
-        with open(VideoFrames.videoPath+vidnum+".sslg.spec", "wb") as f:
-            setting = [SegmentProcessor.BLUR_BIAS, SegmentProcessor.IMG_RESIZE, SegmentProcessor.IMG_SHEER,SegmentProcessor.DIGITS_HEIGHT_MAX,SegmentProcessor.DIGITS_HEIGHT_MIN,SegmentProcessor.MISSING_FAULT_LIMIT_C, SegmentProcessor.MISSING_FAULT_LIMIT_E]
-            pk.dump(setting, f)
-        
-        with open(VideoFrames.videoPath+vidnum+".sslg.spec.txt", "w") as f:
-            setting = [SegmentProcessor.BLUR_BIAS, SegmentProcessor.IMG_RESIZE, SegmentProcessor.IMG_SHEER,SegmentProcessor.DIGITS_HEIGHT_MAX,SegmentProcessor.DIGITS_HEIGHT_MIN,SegmentProcessor.MISSING_FAULT_LIMIT_C, SegmentProcessor.MISSING_FAULT_LIMIT_E]
-            f.write(str(setting))
-
+    print("done!", SegmentProcessor.BLUR_BIAS, SegmentProcessor.IMG_RESIZE, SegmentProcessor.IMG_SHEER,SegmentProcessor.DIGITS_HEIGHT_MAX,SegmentProcessor.DIGITS_HEIGHT_MIN,SegmentProcessor.MISSING_FAULT_LIMIT_C, SegmentProcessor.MISSING_FAULT_LIMIT_E)
+    with open(VideoFrames.videoPath+vidnum+".sslg.spec.txt", "w") as f:
+        setting = [SegmentProcessor.BLUR_BIAS, SegmentProcessor.IMG_RESIZE, SegmentProcessor.IMG_SHEER,SegmentProcessor.DIGITS_HEIGHT_MAX,SegmentProcessor.DIGITS_HEIGHT_MIN,SegmentProcessor.MISSING_FAULT_LIMIT_C, SegmentProcessor.MISSING_FAULT_LIMIT_E]
+        f.write(str(setting))
 
 
 #main progress.
 
 def mainprogress(id,vidPath, start, end,step,fps,dmin, dmax,
                 blurbias, imgresize, imgsheer, heightmax, heightmin, 
-                faulte, faultc,onethresh,rotation, mirror, result, pipeline):
+                faulte, faultc,onethresh,rotation, mirror,timedist, timelow, timeup,
+                 result, pipeline):
     rectpos = pipeline.recv()
     SegmentProcessor.rectpos = rectpos
     SegmentProcessor.digitMin = dmin
@@ -515,6 +533,10 @@ def mainprogress(id,vidPath, start, end,step,fps,dmin, dmax,
     SegmentProcessor.THRESH_IF_ONE = onethresh
     SegmentProcessor.MIRROR = mirror
     SegmentProcessor.ROTATION = rotation
+
+    SegmentProcessor.LOGGING_TIME_DIST = timedist
+    SegmentProcessor.LOGGING_TIME_CUT_LOWER = timelow
+    SegmentProcessor.LOGGING_TIME_CUT_UPPER = timeup
     vid = cv2.VideoCapture(vidPath)
     length = ((end - start) // step) + 1
     for i in range(length):
@@ -544,7 +566,7 @@ if __name__ == "__main__":
         queues = []
         threads = []
         bias = int(VideoFrames.fps * SegmentProcessor.LOGGING_TIME_CUT_LOWER)
-        endframe = int(VideoFrames.frameCount - VideoFrames.fps * SegmentProcessor.LOGGING_TIME_CUT_UPPER)
+        endframe = int( VideoFrames.fps * SegmentProcessor.LOGGING_TIME_CUT_UPPER)
         if SegmentProcessor.LOGGING_TIME_CUT_UPPER == -1:
             endframe = VideoFrames.frameCount
         divided = (endframe - bias) // GROUPED  
@@ -563,7 +585,8 @@ if __name__ == "__main__":
                             int(VideoFrames.fps*SegmentProcessor.LOGGING_TIME_DIST), VideoFrames.fps,SegmentProcessor.digitMin, SegmentProcessor.digitMax
                             ,SegmentProcessor.BLUR_BIAS,SegmentProcessor.IMG_RESIZE,SegmentProcessor.IMG_SHEER,SegmentProcessor.DIGITS_HEIGHT_MAX,SegmentProcessor.DIGITS_HEIGHT_MIN, 
                             SegmentProcessor.MISSING_FAULT_LIMIT_E,SegmentProcessor.MISSING_FAULT_LIMIT_C,SegmentProcessor.THRESH_IF_ONE,
-                            SegmentProcessor.ROTATION,SegmentProcessor.MIRROR, queues[i], segmentprocessor_pipe_child)))
+                            SegmentProcessor.ROTATION,SegmentProcessor.MIRROR,SegmentProcessor.LOGGING_TIME_DIST,SegmentProcessor.LOGGING_TIME_CUT_LOWER,SegmentProcessor.LOGGING_TIME_CUT_UPPER,
+                              queues[i], segmentprocessor_pipe_child)))
         for i in range(divided + 1):
             threads[i].start()
         for i in range(divided + 1):
