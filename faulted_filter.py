@@ -33,6 +33,7 @@ while True:
         times = list(map(float,times))
         datas = list(map(float,datas))
         logged = list(zip(times, datas))
+        logged.sort(key=lambda x:x[0])
     ax.plot(times,datas)
     i=0
     while True:

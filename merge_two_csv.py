@@ -54,7 +54,7 @@ fig, ax = plt.subplots()
 
 ax.plot(times,datas)
 plt.show()
-vidPath = filename = filedialog.asksaveasfilename(
+vidPath =  filedialog.asksaveasfilename(
                 defaultextension='.csv', filetypes=[("csv files", '*.csv')],
                 initialdir="/",
                 title="Choose filename")
